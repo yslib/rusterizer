@@ -1,0 +1,12 @@
+[package]
+name = "rusterizer"
+version = "0.1.0"
+authors = ["Shuoliu Yang <visysl@outlook.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glm = "0.2.3"
+sdl2="0.34"
+assimp="0.3.1"
