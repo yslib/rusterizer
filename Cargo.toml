@@ -10,3 +10,6 @@ edition = "2018"
 glm = "0.2.3"
 sdl2="0.34"
 assimp="0.3.1"
+stb_image = "0.2.2"
+[dependencies.gltf]
+version = "0.15"

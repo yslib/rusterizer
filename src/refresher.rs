@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 extern crate glm;
+extern crate stb_image;
+
 use std::cmp;
 
 pub type Vec3 = glm::Vector3<f32>;
@@ -36,6 +38,16 @@ pub struct Texture2D {
     width: u32,
     height: u32,
     channel: u8,
+}
+impl Default for Texture2D{
+    fn default()->Self{
+        Texture2D {
+            data: vec![0u8;0],
+            width: 0,
+            height: 0,
+            channel: 0,
+        }
+    }
 }
 
 impl Texture2D {
