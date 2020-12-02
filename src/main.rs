@@ -118,6 +118,7 @@ fn main() {
     //refresher.set_vertex(&vertex);
     refresher.set_per_vertex_attribute(attrib);
     refresher.set_index(&index);
+    refresher.enable_face_culling(true);
 
     // create shaders
     let mvp_r = Rc::clone(&mvp);
@@ -129,7 +130,7 @@ fn main() {
         *(mvp_r).borrow() * vec4(v.x, v.y, v.z, 1.0)
     };
 
-    let fs = |fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
+    let fs = move|fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
         use glm::builtin::{dot, max, normalize, pow};
 
         let frag_normal = normalize(fs_in.norm);
@@ -142,7 +143,8 @@ fn main() {
 
         let ambient = 0.2;
         let diffuse = max(dot(light_dir, frag_normal), 0.0);
-        let spec = pow(max(dot(H, eye_dir), 0.0), 32.0);
+        let spec = pow(max(dot(H, eye_dir), 0.0), 10.0);
+        //let spec = max(dot(H,eye_dir),0.0);
 
         let tex_coord = fs_in.texCoord;
         let color = tex_2d.sample_nearest(tex_coord.x, tex_coord.y);
@@ -212,7 +214,6 @@ fn main() {
                 _ => {}
             }
         }
-        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

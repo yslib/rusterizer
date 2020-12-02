@@ -2,8 +2,10 @@
 #![allow(unused_variables)]
 extern crate glm;
 extern crate stb_image;
+extern crate rayon;
 
 use std::cmp;
+use rayon::prelude::*;
 
 pub type Vec3 = glm::Vector3<f32>;
 pub type Vec4 = glm::Vector4<f32>;
@@ -271,7 +273,7 @@ impl<'a> Refresher<'a> {
         self.indexbuffer = Some(index);
     }
 
-    fn rasterize(&mut self, i: usize, vid: i32) -> () {
+    fn rasterize(&mut self, i: usize, vid: i32){
         // warning: The camera and vertex are in the same plane will cause v.w == 0,
         // we don't validate it here
 
@@ -339,7 +341,7 @@ impl<'a> Refresher<'a> {
         let to_screen = |v: &Vec4| -> (Vec2i, f32) {
             let x = ((v.x + 1.0) / 2.0 * (self.resolution.0 as f32)) as i32;
             let y = ((v.y + 1.0) / 2.0 * (self.resolution.1 as f32)) as i32;
-            (vec2i(x, y), v.z)
+            (vec2i(x, self.resolution.1 as i32 - y), v.z)
         };
 
         let persp_div = |v: &Vec4| -> Vec4 { *v / (*v).w };
@@ -386,27 +388,18 @@ impl<'a> Refresher<'a> {
                     let o = &fs_out.color;
                     let idx = (x as u32 + y as u32 * self.resolution.0) as usize;
                     let comp = self.color_component as usize;
-                    let c = Color {
-                        r: (255. * o.x) as u8,
-                        g: (255. * o.y) as u8,
-                        b: (255. * o.z) as u8,
-                        a: 255,
-                    };
-                    self.framebuffer[comp * idx] = c.r;
-                    self.framebuffer[comp * idx + 1] = c.g;
-                    self.framebuffer[comp * idx + 2] = c.b;
-                    self.framebuffer[comp * idx + 3] = c.a;
+                    self.framebuffer[comp * idx] = 255* o.x as u8;
+                    self.framebuffer[comp * idx + 1] = 255 * o.y as u8;
+                    self.framebuffer[comp * idx + 2] = 255*o.z as u8;
+                    self.framebuffer[comp * idx + 3] = 255 * o.w as u8;
                 }
             }
         }
-        ()
     }
 
     pub fn refresh(&mut self) {
         let ib = self.indexbuffer.as_ref().unwrap();
-        for (i, vid) in ib.iter().enumerate().step_by(3) {
-            self.rasterize(i, *vid);
-        }
+        ib.iter().enumerate().step_by(3).for_each(|(i,&vid)|self.rasterize(i, vid));
     }
 
     pub fn raw_buffer(&self) -> &Vec<u8> {
