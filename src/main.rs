@@ -2,9 +2,9 @@ extern crate assimp;
 extern crate glm;
 extern crate gltf;
 extern crate sdl2;
-use std::rc::Rc;
-
 use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Instant;
 
 use assimp::import::Importer;
 use assimp::scene::Scene;
@@ -44,7 +44,7 @@ fn main() {
     // load asset
     let importer = Importer::new();
     let scene = importer
-        .read_file("/home/ysl/Downloads/gltf-models/2.0/Duck/glTF/Duck.gltf")
+        .read_file("/home/ysl/Code/rusterizer/test/obj/diablo3_pose/diablo3_pose.obj")
         .unwrap();
 
     let mut vertex = Vec::<Vec3>::new();
@@ -70,18 +70,18 @@ fn main() {
             }
         }
     }
-    let tex_2d: refresher::Texture2D = match stb_image::image::load("/home/ysl/Downloads/gltf-models/2.0/Duck/glTF/DuckCM.png") {
+    let tex_2d: refresher::Texture2D = match stb_image::image::load(
+        "/home/ysl/Code/rusterizer/test/obj/diablo3_pose/diablo3_pose_diffuse.tga",
+    ) {
         stb_image::image::LoadResult::Error(err) => {
-            panic!("{}",err);
+            panic!("{}", err);
         }
-        stb_image::image::LoadResult::ImageU8(image) => {
-            refresher::Texture2D::from_data(
-                image.data,
-                image.width as u32,
-                image.height as u32,
-                image.depth as u8,
-            )
-        }
+        stb_image::image::LoadResult::ImageU8(image) => refresher::Texture2D::from_integer_data(
+            image.data,
+            image.width as u32,
+            image.height as u32,
+            image.depth as u8,
+        ),
         stb_image::image::LoadResult::ImageF32(image) => {
             panic!("float image is not supported");
         }
@@ -97,7 +97,7 @@ fn main() {
     let ident = glm::mat4(
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     );
-    let s = 0.1;
+    let s = 15.0;
     let camera_pos = vec3(30.0, 30.0, 30.0);
     let mut model = glm::ext::scale(&ident, vec3(s, s, s));
     let view = glm::ext::look_at(
@@ -145,13 +145,22 @@ fn main() {
         let spec = pow(max(dot(H, eye_dir), 0.0), 32.0);
 
         let tex_coord = fs_in.texCoord;
-        let color = tex_2d.sample_nearest(tex_coord.x,tex_coord.y);
-        fs_out.color = vec4(color.x as f32/255.0, color.y as f32/255.0, color.z as f32/255.0, 1.0) * (ambient + diffuse + spec);
+        let color = tex_2d.sample_nearest(tex_coord.x, tex_coord.y);
+        fs_out.color = vec4(
+            color.z as f32 / 255.0,
+            color.y as f32 / 255.0,
+            color.x as f32 / 255.0,
+            1.0,
+        ) * (ambient + diffuse + spec);
         true
     };
 
     refresher.set_vertex_shader(vs);
     refresher.set_fragment_shader(fs);
+
+    let mut framecount = 0;
+    let mut u128 = 0;
+    let start = Instant::now();
 
     // render loop
     'running: loop {
@@ -166,6 +175,14 @@ fn main() {
         refresher.clear_depth_buffer();
         refresher.clear_color_buffer();
         refresher.refresh();
+        framecount += 1;
+        //start.elapsed().as_millis()
+        let elapsed = start.elapsed().as_secs_f32();
+        println!(
+            "FPS:{}, {} millis per frame \r\r",
+            framecount as f32 / elapsed,
+            elapsed * 1000.0f32 / framecount as f32
+        );
 
         // create image from framebuffer and copy to the window
         let surface = Surface::from_data(

@@ -34,15 +34,16 @@ pub struct Color {
 }
 
 pub struct Texture2D {
-    data: Vec<u8>, // 4-bytes aligned
+    data: Vec<f32>, // 4-bytes aligned
     width: u32,
     height: u32,
     channel: u8,
 }
-impl Default for Texture2D{
-    fn default()->Self{
+
+impl Default for Texture2D {
+    fn default() -> Self {
         Texture2D {
-            data: vec![0u8;0],
+            data: vec![0.0f32; 0],
             width: 0,
             height: 0,
             channel: 0,
@@ -51,7 +52,15 @@ impl Default for Texture2D{
 }
 
 impl Texture2D {
-    pub fn from_data(data: Vec<u8>, width: u32, height: u32, channel: u8) -> Self {
+    pub fn from_integer_data(data: Vec<u8>, width: u32, height: u32, channel: u8) -> Self {
+        Texture2D {
+            data: data.iter().map(|&v| v as f32).collect(),
+            width: width,
+            height: height,
+            channel: channel,
+        }
+    }
+    pub fn from_float_data(data: Vec<f32>, width: u32, height: u32, channel: u8) -> Self {
         Texture2D {
             data: data,
             width: width,
@@ -59,15 +68,11 @@ impl Texture2D {
             channel: channel,
         }
     }
-    pub fn sample_nearest(&self, x: f32, y: f32) -> Vec3i {
+    pub fn sample_nearest(&self, x: f32, y: f32) -> Vec3 {
         let fx = floor(x * self.width as f32) as u32;
         let fy = floor(y * self.height as f32) as u32;
         let idx = ((fx + fy * self.width) * self.channel as u32) as usize;
-        vec3i(
-            self.data[idx] as i32,
-            self.data[idx + 1] as i32,
-            self.data[idx + 2] as i32,
-        )
+        vec3(self.data[idx], self.data[idx + 1], self.data[idx + 2])
     }
 }
 
@@ -145,9 +150,23 @@ pub struct PerVertAttrib {
     pub norms: Vec<Vec3>,
 }
 
-impl PerVertAttrib{
-    pub fn new()->Self{
-        PerVertAttrib{vertices:vec![vec3(0.,0.,0.);0],texCoords:vec![vec2(0.,0.);0],norms:vec![vec3(0.,0.,0.);0]}
+impl Default for PerVertAttrib{
+    fn default()->Self{
+        PerVertAttrib {
+            vertices: vec![vec3(0., 0., 0.); 0],
+            texCoords: vec![vec2(0., 0.); 0],
+            norms: vec![vec3(0., 0., 0.); 0],
+        }
+    }
+}
+
+impl PerVertAttrib {
+    pub fn new() -> Self {
+        PerVertAttrib {
+            vertices: vec![vec3(0., 0., 0.); 0],
+            texCoords: vec![vec2(0., 0.); 0],
+            norms: vec![vec3(0., 0., 0.); 0],
+        }
     }
 }
 
@@ -171,9 +190,10 @@ pub struct Refresher<'a> {
     pixel_count: usize,
     color_component: u32,
     clearcolor: Color,
+    enablefaceculling:bool,
     framebuffer: Vec<u8>,
     depthbuffer: Vec<f32>,
-    pervertexattrib:PerVertAttrib,
+    pervertexattrib: PerVertAttrib,
     indexbuffer: Option<&'a Vec<i32>>,
     vertexshader: Option<Box<dyn Fn(&VS_IN, &mut VS_OUT_FS_IN) -> Vec4 + 'a>>,
     fragmentshader: Option<Box<dyn Fn(&VS_OUT_FS_IN, &mut FS_OUT) -> bool + 'a>>,
@@ -200,9 +220,10 @@ impl<'a> Refresher<'a> {
                 b: 255,
                 a: 255,
             },
+            enablefaceculling:false,
             framebuffer: vec![0u8; buffer_size as usize],
             depthbuffer: vec![0.0f32; buffer_size],
-            pervertexattrib:PerVertAttrib::new(),
+            pervertexattrib: PerVertAttrib::new(),
             indexbuffer: None,
             vertexshader: None,
             fragmentshader: None,
@@ -220,7 +241,11 @@ impl<'a> Refresher<'a> {
         self.clearcolor = clearcolor;
     }
 
-    pub fn set_per_vertex_attribute(&mut self,attrib:PerVertAttrib) {
+    pub fn enable_face_culling(&mut self,enable:bool){
+        self.enablefaceculling = enable;
+    }
+
+    pub fn set_per_vertex_attribute(&mut self, attrib: PerVertAttrib) {
         self.pervertexattrib = attrib;
     }
 
@@ -242,34 +267,26 @@ impl<'a> Refresher<'a> {
         self.fragmentshader = Some(Box::new(fs));
     }
 
-    pub fn set_index(&mut self, index:&'a Vec<i32>) {
+    pub fn set_index(&mut self, index: &'a Vec<i32>) {
         self.indexbuffer = Some(index);
     }
 
     fn rasterize(&mut self, i: usize, vid: i32) -> () {
         // warning: The camera and vertex are in the same plane will cause v.w == 0,
         // we don't validate it here
-        let perspective_divide = |v: Vec4| -> Vec4 { v / v.w };
 
         let ib = self.indexbuffer.as_ref().unwrap();
         let vs = self.vertexshader.as_ref().unwrap();
         let fs = self.fragmentshader.as_ref().unwrap();
 
         // per-vertex attribute
-        let vb = &self.pervertexattrib.vertices; 
+        let vb = &self.pervertexattrib.vertices;
         let tb = &self.pervertexattrib.texCoords;
         let nb = &self.pervertexattrib.norms;
 
-        let to_screen = |v: &Vec4| -> (Vec2i, f32) {
-            let x = ((v.x + 1.0) / 2.0 * (self.resolution.0 as f32)) as i32;
-            let y = ((v.y + 1.0) / 2.0 * (self.resolution.1 as f32)) as i32;
-            (vec2i(x, y), v.z)
-        };
-
         let i0 = ib[i] as usize;
-        let i1 = ib[i+1] as usize;
-        let i2 = ib[i+2] as usize;
-
+        let i1 = ib[i + 1] as usize;
+        let i2 = ib[i + 2] as usize;
 
         let p0_vs_in = VS_IN {
             vertex: &vb[i0],
@@ -290,25 +307,46 @@ impl<'a> Refresher<'a> {
         };
 
         let mut p0_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0.,0.,0.),
-            texCoord: vec2(0.,0.),
-            norm: vec3(0.,0.,0.),
+            vertex: vec3(0., 0., 0.),
+            texCoord: vec2(0., 0.),
+            norm: vec3(0., 0., 0.),
         };
         let mut p1_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0.,0.,0.),
-            texCoord: vec2(0.,0.),
-            norm: vec3(0.,0.,0.),
+            vertex: vec3(0., 0., 0.),
+            texCoord: vec2(0., 0.),
+            norm: vec3(0., 0., 0.),
         };
         let mut p2_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0.,0.,0.),
-            texCoord: vec2(0.,0.),
-            norm: vec3(0.,0.,0.),
+            vertex: vec3(0., 0., 0.),
+            texCoord: vec2(0., 0.),
+            norm: vec3(0., 0., 0.),
         };
 
+        let cp0 = vs(&p0_vs_in, &mut p0_vs_out);
+        let cp1 = vs(&p1_vs_in, &mut p1_vs_out);
+        let cp2 = vs(&p2_vs_in, &mut p2_vs_out);
 
-        let p0 = to_screen(&perspective_divide(vs(&p0_vs_in, &mut p0_vs_out)));
-        let p1 = to_screen(&perspective_divide(vs(&p1_vs_in, &mut p1_vs_out)));
-        let p2 = to_screen(&perspective_divide(vs(&p2_vs_in, &mut p2_vs_out)));
+        if self.enablefaceculling && glm::cross(
+            cp2.truncate(3) - cp0.truncate(3),
+            cp1.truncate(3) - cp0.truncate(3),
+        )
+        .z > 0.0
+        {
+            // Culls face
+            return;
+        }
+
+        let to_screen = |v: &Vec4| -> (Vec2i, f32) {
+            let x = ((v.x + 1.0) / 2.0 * (self.resolution.0 as f32)) as i32;
+            let y = ((v.y + 1.0) / 2.0 * (self.resolution.1 as f32)) as i32;
+            (vec2i(x, y), v.z)
+        };
+
+        let persp_div = |v: &Vec4| -> Vec4 { *v / (*v).w };
+
+        let p0 = to_screen(&persp_div(&cp0));
+        let p1 = to_screen(&persp_div(&cp1));
+        let p2 = to_screen(&persp_div(&cp2));
 
         let mut aabb = Bound2i::from_points(&p0.0, &p1.0);
         aabb.union(&p2.0);
@@ -317,17 +355,20 @@ impl<'a> Refresher<'a> {
         // for each pixel in the bounding box of a triangle
         for x in aabb.min.x..aabb.max.x {
             for y in aabb.min.y..aabb.max.y {
-
                 let p = vec2i(x, y);
                 let res = barycentric(&[p0.0, p1.0, p2.0], &p); // Check the current pixel is in the triangle by the barycentric
-                if res.x <= 0.0f32 || res.y <= 0.0f32 || res.z <= 0.0f32 {
+                if res.x < 0.0f32 || res.y < 0.0f32 || res.z < 0.0f32 {
                     continue;
                 }
                 let d = p0.1 * res.x + p1.1 * res.y + p2.1 * res.z; // interpulate the depth
 
-                let interp_vertex = p0_vs_out.vertex * res.x + p1_vs_out.vertex*res.y + p2_vs_out.vertex * res.z;
-                let interp_norm = p0_vs_out.norm * res.x + p1_vs_out.norm*res.y + p2_vs_out.norm * res.z;
-                let interp_tex = p0_vs_out.texCoord * res.x + p1_vs_out.texCoord*res.y + p2_vs_out.texCoord * res.z;
+                let interp_vertex =
+                    p0_vs_out.vertex * res.x + p1_vs_out.vertex * res.y + p2_vs_out.vertex * res.z;
+                let interp_norm =
+                    p0_vs_out.norm * res.x + p1_vs_out.norm * res.y + p2_vs_out.norm * res.z;
+                let interp_tex = p0_vs_out.texCoord * res.x
+                    + p1_vs_out.texCoord * res.y
+                    + p2_vs_out.texCoord * res.z;
 
                 let fs_in = VS_OUT_FS_IN {
                     vertex: interp_vertex,
@@ -345,11 +386,11 @@ impl<'a> Refresher<'a> {
                     let o = &fs_out.color;
                     let idx = (x as u32 + y as u32 * self.resolution.0) as usize;
                     let comp = self.color_component as usize;
-                    let c = Color{
-                        r:(255. * o.x) as u8,
-                        g:(255. * o.y) as u8,
-                        b:(255. * o.z) as u8,
-                        a:255,
+                    let c = Color {
+                        r: (255. * o.x) as u8,
+                        g: (255. * o.y) as u8,
+                        b: (255. * o.z) as u8,
+                        a: 255,
                     };
                     self.framebuffer[comp * idx] = c.r;
                     self.framebuffer[comp * idx + 1] = c.g;
