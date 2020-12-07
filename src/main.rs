@@ -4,6 +4,8 @@ extern crate gltf;
 extern crate sdl2;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::Instant;
 
 use assimp::import::Importer;
@@ -106,7 +108,8 @@ fn main() {
         vec3(0.0f32, 1.0f32, 0.0f32),
     );
     let proj = glm::ext::perspective(45.0f32, res.0 as f32 / res.0 as f32, 0.001f32, 1000.0f32);
-    let mvp = Rc::new(RefCell::new(proj * view * model));
+    //let mvp = Arc::new(RwLock::new(proj * view * model));
+    let mut mvp = proj * view * model;
 
     // create a light
     let light = camera_pos;
@@ -121,16 +124,16 @@ fn main() {
     refresher.enable_face_culling(true);
 
     // create shaders
-    let mvp_r = Rc::clone(&mvp);
+    let mvp_r = &mvp as *const glm::Matrix4<f32> as *mut glm::Matrix4<f32>;
     let vs = move |vs_in: &VS_IN, vs_out: &mut VS_OUT_FS_IN| -> Vec4 {
         let v = &vs_in.vertex;
         vs_out.vertex = *vs_in.vertex;
         vs_out.texCoord = *vs_in.texCoord;
         vs_out.norm = *vs_in.norm;
-        *(mvp_r).borrow() * vec4(v.x, v.y, v.z, 1.0)
+        unsafe{*mvp_r * vec4(v.x, v.y, v.z, 1.0)}
     };
 
-    let fs = move|fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
+    let fs = |fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
         use glm::builtin::{dot, max, normalize, pow};
 
         let frag_normal = normalize(fs_in.norm);
@@ -143,7 +146,7 @@ fn main() {
 
         let ambient = 0.2;
         let diffuse = max(dot(light_dir, frag_normal), 0.0);
-        let spec = pow(max(dot(H, eye_dir), 0.0), 10.0);
+        let spec = pow(max(dot(H, eye_dir), 0.0), 32.0);
         //let spec = max(dot(H,eye_dir),0.0);
 
         let tex_coord = fs_in.texCoord;
@@ -161,8 +164,8 @@ fn main() {
     refresher.set_fragment_shader(fs);
 
     let mut framecount = 0;
-    let mut u128 = 0;
     let start = Instant::now();
+    let mut prev = start.elapsed().as_secs_f32();
 
     // render loop
     'running: loop {
@@ -170,8 +173,9 @@ fn main() {
 
         // update matrix
         //
-        model = glm::ext::rotate(&model, glm::radians(5.0), vec3(0.0, 1.0, 0.0));
-        *mvp.borrow_mut() = proj * view * model;
+        model = glm::ext::rotate(&model, glm::radians(1.0), vec3(0.0, 1.0, 0.0));
+        //*(mvp.write().unwrap()) = proj * view * model;
+        unsafe{*mvp_r = proj * view * model}
         // rendering
 
         refresher.clear_depth_buffer();
@@ -179,12 +183,17 @@ fn main() {
         refresher.refresh();
         framecount += 1;
         //start.elapsed().as_millis()
-        let elapsed = start.elapsed().as_secs_f32();
-        println!(
-            "FPS:{}, {} millis per frame \r\r",
-            framecount as f32 / elapsed,
-            elapsed * 1000.0f32 / framecount as f32
-        );
+        
+        if framecount % 200 == 0 {
+            let cur = start.elapsed().as_secs_f32();
+            let interval = cur- prev;
+            prev = cur;
+            println!(
+                "FPS:{}, {} millis per frame \r\r",
+                 200.0f32 / interval,
+                interval * 1000.0f32 / framecount as f32
+            );
+        }
 
         // create image from framebuffer and copy to the window
         let surface = Surface::from_data(

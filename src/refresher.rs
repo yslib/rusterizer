@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 extern crate glm;
-extern crate stb_image;
 extern crate rayon;
+extern crate stb_image;
 
-use std::cmp;
 use rayon::prelude::*;
+use std::cmp;
+use std::sync::Arc;
 
 pub type Vec3 = glm::Vector3<f32>;
 pub type Vec4 = glm::Vector4<f32>;
@@ -152,8 +153,8 @@ pub struct PerVertAttrib {
     pub norms: Vec<Vec3>,
 }
 
-impl Default for PerVertAttrib{
-    fn default()->Self{
+impl Default for PerVertAttrib {
+    fn default() -> Self {
         PerVertAttrib {
             vertices: vec![vec3(0., 0., 0.); 0],
             texCoords: vec![vec2(0., 0.); 0],
@@ -192,14 +193,17 @@ pub struct Refresher<'a> {
     pixel_count: usize,
     color_component: u32,
     clearcolor: Color,
-    enablefaceculling:bool,
+    enablefaceculling: bool,
     framebuffer: Vec<u8>,
     depthbuffer: Vec<f32>,
     pervertexattrib: PerVertAttrib,
     indexbuffer: Option<&'a Vec<i32>>,
-    vertexshader: Option<Box<dyn Fn(&VS_IN, &mut VS_OUT_FS_IN) -> Vec4 + 'a>>,
-    fragmentshader: Option<Box<dyn Fn(&VS_OUT_FS_IN, &mut FS_OUT) -> bool + 'a>>,
+    vertexshader: Option<Arc<dyn Fn(&VS_IN, &mut VS_OUT_FS_IN) -> Vec4 + 'a>>,
+    fragmentshader: Option<Arc<dyn Fn(&VS_OUT_FS_IN, &mut FS_OUT) -> bool + 'a>>,
 }
+
+unsafe impl<'a> std::marker::Sync for Refresher<'a>{}
+unsafe impl<'a> std::marker::Send for Refresher<'a>{}
 
 #[allow(non_camel_case_types)]
 impl<'a> Refresher<'a> {
@@ -222,7 +226,7 @@ impl<'a> Refresher<'a> {
                 b: 255,
                 a: 255,
             },
-            enablefaceculling:false,
+            enablefaceculling: false,
             framebuffer: vec![0u8; buffer_size as usize],
             depthbuffer: vec![0.0f32; buffer_size],
             pervertexattrib: PerVertAttrib::new(),
@@ -243,7 +247,7 @@ impl<'a> Refresher<'a> {
         self.clearcolor = clearcolor;
     }
 
-    pub fn enable_face_culling(&mut self,enable:bool){
+    pub fn enable_face_culling(&mut self, enable: bool) {
         self.enablefaceculling = enable;
     }
 
@@ -259,27 +263,27 @@ impl<'a> Refresher<'a> {
     where
         F: Fn(&VS_IN, &mut VS_OUT_FS_IN) -> Vec4 + 'a,
     {
-        self.vertexshader = Some(Box::new(vs));
+        self.vertexshader = Some(Arc::new(vs));
     }
 
     pub fn set_fragment_shader<F>(&mut self, fs: F)
     where
         F: Fn(&VS_OUT_FS_IN, &mut FS_OUT) -> bool + 'a,
     {
-        self.fragmentshader = Some(Box::new(fs));
+        self.fragmentshader = Some(Arc::new(fs));
     }
 
     pub fn set_index(&mut self, index: &'a Vec<i32>) {
         self.indexbuffer = Some(index);
     }
 
-    fn rasterize(&mut self, i: usize, vid: i32){
+    fn rasterize(&self, i: usize, vid: i32) {
         // warning: The camera and vertex are in the same plane will cause v.w == 0,
         // we don't validate it here
 
         let ib = self.indexbuffer.as_ref().unwrap();
-        let vs = self.vertexshader.as_ref().unwrap();
-        let fs = self.fragmentshader.as_ref().unwrap();
+        let vs = self.vertexshader.as_ref().unwrap().clone();
+        let fs = self.fragmentshader.as_ref().unwrap().clone();
 
         // per-vertex attribute
         let vb = &self.pervertexattrib.vertices;
@@ -328,11 +332,12 @@ impl<'a> Refresher<'a> {
         let cp1 = vs(&p1_vs_in, &mut p1_vs_out);
         let cp2 = vs(&p2_vs_in, &mut p2_vs_out);
 
-        if self.enablefaceculling && glm::cross(
-            cp2.truncate(3) - cp0.truncate(3),
-            cp1.truncate(3) - cp0.truncate(3),
-        )
-        .z > 0.0
+        if self.enablefaceculling
+            && glm::cross(
+                cp2.truncate(3) - cp0.truncate(3),
+                cp1.truncate(3) - cp0.truncate(3),
+            )
+            .z > 0.0
         {
             // Culls face
             return;
@@ -383,23 +388,32 @@ impl<'a> Refresher<'a> {
                 let not_discard = fs(&fs_in, &mut fs_out);
 
                 let index = (x as usize + y as usize * self.resolution.0 as usize) as usize;
-                if self.depthbuffer[index] > d && not_discard {
-                    self.depthbuffer[index] = d;
-                    let o = &fs_out.color;
-                    let idx = (x as u32 + y as u32 * self.resolution.0) as usize;
-                    let comp = self.color_component as usize;
-                    self.framebuffer[comp * idx] = 255* o.x as u8;
-                    self.framebuffer[comp * idx + 1] = 255 * o.y as u8;
-                    self.framebuffer[comp * idx + 2] = 255*o.z as u8;
-                    self.framebuffer[comp * idx + 3] = 255 * o.w as u8;
+                unsafe {
+                    let db =
+                        (*((&self.depthbuffer) as *const Vec<f32> as *mut Vec<f32>)).as_mut_slice();
+                    let fb =
+                        (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
+                    if *db.get_unchecked_mut(index) > d && not_discard {
+                        *db.get_unchecked_mut(index) = d;
+                        let o = &fs_out.color;
+                        let idx = (x as u32 + y as u32 * self.resolution.0) as usize;
+                        let comp = self.color_component as usize;
+                        *fb.get_unchecked_mut(comp * idx) = (255.0 * o.x) as u8;
+                        *fb.get_unchecked_mut(comp * idx + 1) = (255.0 * o.y) as u8;
+                        *fb.get_unchecked_mut(comp * idx + 2) = (255.0 * o.z) as u8;
+                        *fb.get_unchecked_mut(comp * idx + 3) = (255.0 * o.w) as u8;
+                    }
                 }
             }
         }
     }
 
-    pub fn refresh(&mut self) {
+    pub fn refresh(&self) {
         let ib = self.indexbuffer.as_ref().unwrap();
-        ib.iter().enumerate().step_by(3).for_each(|(i,&vid)|self.rasterize(i, vid));
+        ib.par_iter()
+            .enumerate()
+            .step_by(3)
+            .for_each(|(i, &vid)| self.rasterize(i, vid));
     }
 
     pub fn raw_buffer(&self) -> &Vec<u8> {
