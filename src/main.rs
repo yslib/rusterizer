@@ -1,11 +1,8 @@
+#![allow(non_snake_case)]
 extern crate assimp;
 extern crate glm;
 extern crate gltf;
 extern crate sdl2;
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::RwLock;
 use std::time::Instant;
 
 use assimp::import::Importer;
@@ -15,7 +12,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::surface::Surface;
-use std::time::Duration;
 
 mod refresher;
 
@@ -50,13 +46,13 @@ fn main() {
         .unwrap();
 
     let mut vertex = Vec::<Vec3>::new();
-    let mut texCoord = Vec::<Vec2>::new();
+    let mut tex_coord = Vec::<Vec2>::new();
     let mut norms = Vec::<Vec3>::new();
     let mut index = Vec::<i32>::new();
 
     for mesh in scene.mesh_iter() {
         vertex = mesh.vertex_iter().map(|v| vec3(v.x, v.y, v.z)).collect();
-        texCoord = mesh
+        tex_coord = mesh
             .texture_coords_iter(0)
             .map(|v| vec2(v.x, v.y))
             .collect();
@@ -84,14 +80,14 @@ fn main() {
             image.height as u32,
             image.depth as u8,
         ),
-        stb_image::image::LoadResult::ImageF32(image) => {
+        stb_image::image::LoadResult::ImageF32(_image) => {
             panic!("float image is not supported");
         }
     };
 
     let attrib = refresher::PerVertAttrib {
         vertices: vertex,
-        texCoords: texCoord,
+        texCoords: tex_coord,
         norms: norms,
     };
 
@@ -109,7 +105,7 @@ fn main() {
     );
     let proj = glm::ext::perspective(45.0f32, res.0 as f32 / res.0 as f32, 0.001f32, 1000.0f32);
     //let mvp = Arc::new(RwLock::new(proj * view * model));
-    let mut mvp = proj * view * model;
+    let mvp = proj * view * model;
 
     // create a light
     let light = camera_pos;
@@ -124,13 +120,12 @@ fn main() {
     refresher.enable_face_culling(true);
 
     // create shaders
-    let mvp_r = &mvp as *const glm::Matrix4<f32> as *mut glm::Matrix4<f32>;
-    let vs = move |vs_in: &VS_IN, vs_out: &mut VS_OUT_FS_IN| -> Vec4 {
+    let vs = |vs_in: &VS_IN, vs_out: &mut VS_OUT_FS_IN| -> Vec4 {
         let v = &vs_in.vertex;
         vs_out.vertex = *vs_in.vertex;
         vs_out.texCoord = *vs_in.texCoord;
         vs_out.norm = *vs_in.norm;
-        unsafe{*mvp_r * vec4(v.x, v.y, v.z, 1.0)}
+        mvp * vec4(v.x, v.y, v.z, 1.0)
     };
 
     let fs = |fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
@@ -142,7 +137,6 @@ fn main() {
         let light_dir = normalize(light - *frag_pos);
 
         let H = (eye_dir + light_dir) / 2.0;
-        let f = dot(H, fs_in.norm);
 
         let ambient = 0.2;
         let diffuse = max(dot(light_dir, frag_normal), 0.0);
@@ -170,12 +164,14 @@ fn main() {
     // render loop
     'running: loop {
         // clear
-
         // update matrix
         //
-        model = glm::ext::rotate(&model, glm::radians(1.0), vec3(0.0, 1.0, 0.0));
-        //*(mvp.write().unwrap()) = proj * view * model;
-        unsafe{*mvp_r = proj * view * model}
+        unsafe {
+            model = glm::ext::rotate(&model, glm::radians(1.0), vec3(0.0, 1.0, 0.0));
+            let mvp_r = &mvp as *const glm::Matrix4<f32> as *mut glm::Matrix4<f32>;
+            *mvp_r = proj * view * model;
+        }
+
         // rendering
 
         refresher.clear_depth_buffer();
@@ -183,14 +179,14 @@ fn main() {
         refresher.refresh();
         framecount += 1;
         //start.elapsed().as_millis()
-        
+
         if framecount % 200 == 0 {
             let cur = start.elapsed().as_secs_f32();
-            let interval = cur- prev;
+            let interval = cur - prev;
             prev = cur;
             println!(
                 "FPS:{}, {} millis per frame \r\r",
-                 200.0f32 / interval,
+                200.0f32 / interval,
                 interval * 1000.0f32 / framecount as f32
             );
         }
@@ -252,7 +248,7 @@ mod tests {
         }
 
         let mut vertex = Vec::<Vec3>::new();
-        let mut texCoord = Vec::<Vec2>::new();
+        let mut tex_coord = Vec::<Vec2>::new();
         let mut norms = Vec::<Vec3>::new();
 
         let (doc, buffers, images) = gltf::import(path).unwrap();
@@ -271,7 +267,7 @@ mod tests {
                     norms = iter.map(|v| vec3(v[0], v[1], v[2])).collect();
                 }
                 if let Some(iter) = reader.read_tex_coords() {
-                    texCoord = iter.map(|v| vec2(v[0], v[1])).collect();
+                    tex_coord = iter.map(|v| vec2(v[0], v[1])).collect();
                 }
             }
         }

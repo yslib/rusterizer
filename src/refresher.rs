@@ -202,8 +202,8 @@ pub struct Refresher<'a> {
     fragmentshader: Option<Arc<dyn Fn(&VS_OUT_FS_IN, &mut FS_OUT) -> bool + 'a>>,
 }
 
-unsafe impl<'a> std::marker::Sync for Refresher<'a>{}
-unsafe impl<'a> std::marker::Send for Refresher<'a>{}
+unsafe impl<'a> std::marker::Sync for Refresher<'a> {}
+unsafe impl<'a> std::marker::Send for Refresher<'a> {}
 
 #[allow(non_camel_case_types)]
 impl<'a> Refresher<'a> {
@@ -368,7 +368,6 @@ impl<'a> Refresher<'a> {
                     continue;
                 }
                 let d = p0.1 * res.x + p1.1 * res.y + p2.1 * res.z; // interpulate the depth
-
                 let interp_vertex =
                     p0_vs_out.vertex * res.x + p1_vs_out.vertex * res.y + p2_vs_out.vertex * res.z;
                 let interp_norm =
@@ -382,26 +381,19 @@ impl<'a> Refresher<'a> {
                     texCoord: interp_tex,
                     norm: interp_norm,
                 };
+
                 let mut fs_out = FS_OUT {
                     color: vec4(0., 0., 0., 0.),
                 };
                 let not_discard = fs(&fs_in, &mut fs_out);
-
                 let index = (x as usize + y as usize * self.resolution.0 as usize) as usize;
+
                 unsafe {
                     let db =
                         (*((&self.depthbuffer) as *const Vec<f32> as *mut Vec<f32>)).as_mut_slice();
-                    let fb =
-                        (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
                     if *db.get_unchecked_mut(index) > d && not_discard {
                         *db.get_unchecked_mut(index) = d;
-                        let o = &fs_out.color;
-                        let idx = (x as u32 + y as u32 * self.resolution.0) as usize;
-                        let comp = self.color_component as usize;
-                        *fb.get_unchecked_mut(comp * idx) = (255.0 * o.x) as u8;
-                        *fb.get_unchecked_mut(comp * idx + 1) = (255.0 * o.y) as u8;
-                        *fb.get_unchecked_mut(comp * idx + 2) = (255.0 * o.z) as u8;
-                        *fb.get_unchecked_mut(comp * idx + 3) = (255.0 * o.w) as u8;
+                        self.set_pixel_unsafe(index, &fs_out.color);
                     }
                 }
             }
@@ -431,12 +423,27 @@ impl<'a> Refresher<'a> {
     pub fn clear_color_buffer(&mut self) {
         let pixels = self.buffer_bytes / self.color_component as usize;
         let comp = self.color_component as usize;
-        for i in 0..pixels {
-            self.framebuffer[comp * i] = self.clearcolor.r;
-            self.framebuffer[comp * i + 1] = self.clearcolor.g;
-            self.framebuffer[comp * i + 2] = self.clearcolor.b;
-            self.framebuffer[comp * i + 3] = self.clearcolor.a;
-        }
+        (0..pixels).into_par_iter().for_each(|pixel_index| unsafe {
+            self.set_pixel_unsafe_2(pixel_index,&self.clearcolor);
+        });
+    }
+
+    unsafe fn set_pixel_unsafe_2(&self, pixel_index: usize, color: &Color) {
+        let fb = (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
+        let comp = self.color_component as usize;
+        *fb.get_unchecked_mut(comp * pixel_index) = self.clearcolor.r;
+        *fb.get_unchecked_mut(comp * pixel_index + 1) = self.clearcolor.g;
+        *fb.get_unchecked_mut(comp * pixel_index + 2) = self.clearcolor.b;
+        *fb.get_unchecked_mut(comp * pixel_index + 3) = self.clearcolor.a;
+    }
+
+    unsafe fn set_pixel_unsafe(&self, pixel_index: usize, color: &Vec4) {
+        let fb = (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
+        let comp = self.color_component as usize;
+        *fb.get_unchecked_mut(comp * pixel_index) = (255.0 * color.x) as u8;
+        *fb.get_unchecked_mut(comp * pixel_index + 1) = (255.0 * color.y) as u8;
+        *fb.get_unchecked_mut(comp * pixel_index + 2) = (255.0 * color.z) as u8;
+        *fb.get_unchecked_mut(comp * pixel_index + 3) = (255.0 * color.w) as u8;
     }
 
     pub fn clear_depth_buffer(&mut self) {
