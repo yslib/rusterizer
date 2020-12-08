@@ -85,6 +85,15 @@ struct Bound2i {
     pub max: Vec2i,
 }
 
+impl Default for Bound2i{
+    fn default()->Self{
+        Self::new()
+    }
+}
+
+// unsafe impl std::marker::Sync for Bound2i{}
+// unsafe impl std::marker::Send for Bound2i{}
+
 impl Bound2i {
     pub fn new() -> Self {
         Bound2i {
@@ -146,6 +155,7 @@ pub struct VS_IN<'a> {
     pub norm: &'a Vec3,
 }
 
+
 #[allow(non_snake_case)]
 pub struct PerVertAttrib {
     pub vertices: Vec<Vec3>,
@@ -180,9 +190,27 @@ pub struct VS_OUT_FS_IN {
     pub norm: Vec3,
 }
 
+impl Default for VS_OUT_FS_IN{
+    fn default()->Self{
+        Self{
+            vertex:vec3(0.0,0.0,0.0),
+            texCoord:vec2(0.0,0.0),
+            norm:vec3(0.0,0.0,0.0)
+        }
+    }
+}
+
 #[allow(non_camel_case_types)]
 pub struct FS_OUT {
     pub color: Vec4,
+}
+
+impl Default for FS_OUT{
+    fn default()->Self{
+        Self{
+            color:vec4(0.0,0.0,0.0,0.0)
+        }
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -312,21 +340,9 @@ impl<'a> Refresher<'a> {
             norm: &nb[i2],
         };
 
-        let mut p0_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0., 0., 0.),
-            texCoord: vec2(0., 0.),
-            norm: vec3(0., 0., 0.),
-        };
-        let mut p1_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0., 0., 0.),
-            texCoord: vec2(0., 0.),
-            norm: vec3(0., 0., 0.),
-        };
-        let mut p2_vs_out = VS_OUT_FS_IN {
-            vertex: vec3(0., 0., 0.),
-            texCoord: vec2(0., 0.),
-            norm: vec3(0., 0., 0.),
-        };
+        let mut p0_vs_out: VS_OUT_FS_IN= Default::default();
+        let mut p1_vs_out: VS_OUT_FS_IN= Default::default();
+        let mut p2_vs_out: VS_OUT_FS_IN= Default::default();
 
         let cp0 = vs(&p0_vs_in, &mut p0_vs_out);
         let cp1 = vs(&p1_vs_in, &mut p1_vs_out);
@@ -359,8 +375,8 @@ impl<'a> Refresher<'a> {
         aabb.union(&p2.0);
         aabb = aabb.intersect(&self.screenbox); // clip
 
-        // for each pixel in the bounding box of a triangle
-        for x in aabb.min.x..aabb.max.x {
+        for x in aabb.min.x..aabb.max.x
+        {
             for y in aabb.min.y..aabb.max.y {
                 let p = vec2i(x, y);
                 let res = barycentric(&[p0.0, p1.0, p2.0], &p); // Check the current pixel is in the triangle by the barycentric
@@ -382,9 +398,8 @@ impl<'a> Refresher<'a> {
                     norm: interp_norm,
                 };
 
-                let mut fs_out = FS_OUT {
-                    color: vec4(0., 0., 0., 0.),
-                };
+                let mut fs_out: FS_OUT = Default::default();
+
                 let not_discard = fs(&fs_in, &mut fs_out);
                 let index = (x as usize + y as usize * self.resolution.0 as usize) as usize;
 
@@ -424,7 +439,7 @@ impl<'a> Refresher<'a> {
         let pixels = self.buffer_bytes / self.color_component as usize;
         let comp = self.color_component as usize;
         (0..pixels).into_par_iter().for_each(|pixel_index| unsafe {
-            self.set_pixel_unsafe_2(pixel_index,&self.clearcolor);
+            self.set_pixel_unsafe_2(pixel_index, &self.clearcolor);
         });
     }
 

@@ -96,7 +96,7 @@ fn main() {
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     );
     let s = 15.0;
-    let camera_pos = vec3(30.0, 30.0, 30.0);
+    let camera_pos = vec3(15.0,15.0,15.0);
     let mut model = glm::ext::scale(&ident, vec3(s, s, s));
     let view = glm::ext::look_at(
         camera_pos,
