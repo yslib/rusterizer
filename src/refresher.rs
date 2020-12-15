@@ -6,7 +6,9 @@ extern crate stb_image;
 
 use rayon::prelude::*;
 use std::cmp;
+use std::rc::Rc;
 use std::sync::Arc;
+use unsafe_unwrap::UnsafeUnwrap;
 
 pub type Vec3 = glm::Vector3<f32>;
 pub type Vec4 = glm::Vector4<f32>;
@@ -37,10 +39,10 @@ pub struct Color {
 }
 
 pub struct Texture2D {
-    data: Vec<f32>, // 4-bytes aligned
-    width: u32,
-    height: u32,
-    channel: u8,
+    pub data: Vec<f32>, // 4-bytes aligned
+    pub width: u32,
+    pub height: u32,
+    pub channel: u8,
 }
 
 impl Default for Texture2D {
@@ -77,6 +79,14 @@ impl Texture2D {
         let idx = ((fx + fy * self.width) * self.channel as u32) as usize;
         vec3(self.data[idx], self.data[idx + 1], self.data[idx + 2])
     }
+
+    pub fn raw_data(&self) -> &Vec<f32> {
+        &self.data
+    }
+
+    pub fn raw_data_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.data
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -85,8 +95,8 @@ struct Bound2i {
     pub max: Vec2i,
 }
 
-impl Default for Bound2i{
-    fn default()->Self{
+impl Default for Bound2i {
+    fn default() -> Self {
         Self::new()
     }
 }
@@ -155,7 +165,6 @@ pub struct VS_IN<'a> {
     pub norm: &'a Vec3,
 }
 
-
 #[allow(non_snake_case)]
 pub struct PerVertAttrib {
     pub vertices: Vec<Vec3>,
@@ -190,12 +199,12 @@ pub struct VS_OUT_FS_IN {
     pub norm: Vec3,
 }
 
-impl Default for VS_OUT_FS_IN{
-    fn default()->Self{
-        Self{
-            vertex:vec3(0.0,0.0,0.0),
-            texCoord:vec2(0.0,0.0),
-            norm:vec3(0.0,0.0,0.0)
+impl Default for VS_OUT_FS_IN {
+    fn default() -> Self {
+        Self {
+            vertex: vec3(0.0, 0.0, 0.0),
+            texCoord: vec2(0.0, 0.0),
+            norm: vec3(0.0, 0.0, 0.0),
         }
     }
 }
@@ -205,10 +214,10 @@ pub struct FS_OUT {
     pub color: Vec4,
 }
 
-impl Default for FS_OUT{
-    fn default()->Self{
-        Self{
-            color:vec4(0.0,0.0,0.0,0.0)
+impl Default for FS_OUT {
+    fn default() -> Self {
+        Self {
+            color: vec4(0.0, 0.0, 0.0, 0.0),
         }
     }
 }
@@ -222,8 +231,10 @@ pub struct Refresher<'a> {
     color_component: u32,
     clearcolor: Color,
     enablefaceculling: bool,
-    framebuffer: Vec<u8>,
-    depthbuffer: Vec<f32>,
+    def_fb: Vec<u8>,
+    def_db: Vec<f32>,
+    framebuffer: *mut u8,
+    depthbuffer: *mut f32,
     pervertexattrib: PerVertAttrib,
     indexbuffer: Option<&'a Vec<i32>>,
     vertexshader: Option<Arc<dyn Fn(&VS_IN, &mut VS_OUT_FS_IN) -> Vec4 + 'a>>,
@@ -242,26 +253,32 @@ impl<'a> Refresher<'a> {
             min: vec2i(0, 0),
             max: vec2i(res.0 as i32, res.1 as i32),
         };
-        Refresher {
+
+        let mut refresher = Refresher {
             resolution: res,
             screenbox: aabb,
             buffer_bytes: buffer_size,
             pixel_count: res.0 as usize * res.1 as usize,
             color_component: comp,
             clearcolor: Color {
-                r: 255,
-                g: 255,
-                b: 255,
-                a: 255,
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
             },
             enablefaceculling: false,
-            framebuffer: vec![0u8; buffer_size as usize],
-            depthbuffer: vec![0.0f32; buffer_size],
+            def_fb: vec![0u8; buffer_size as usize],
+            def_db: vec![1.0f32; buffer_size],
+            framebuffer: std::ptr::null_mut(),
+            depthbuffer: std::ptr::null_mut(),
             pervertexattrib: PerVertAttrib::new(),
             indexbuffer: None,
             vertexshader: None,
             fragmentshader: None,
-        }
+        };
+        refresher.framebuffer = refresher.def_fb.as_mut_ptr();
+        refresher.depthbuffer = refresher.def_db.as_mut_ptr();
+        refresher
     }
 
     pub fn buffer_bytes(&self) -> usize {
@@ -340,9 +357,9 @@ impl<'a> Refresher<'a> {
             norm: &nb[i2],
         };
 
-        let mut p0_vs_out: VS_OUT_FS_IN= Default::default();
-        let mut p1_vs_out: VS_OUT_FS_IN= Default::default();
-        let mut p2_vs_out: VS_OUT_FS_IN= Default::default();
+        let mut p0_vs_out: VS_OUT_FS_IN = Default::default();
+        let mut p1_vs_out: VS_OUT_FS_IN = Default::default();
+        let mut p2_vs_out: VS_OUT_FS_IN = Default::default();
 
         let cp0 = vs(&p0_vs_in, &mut p0_vs_out);
         let cp1 = vs(&p1_vs_in, &mut p1_vs_out);
@@ -375,8 +392,7 @@ impl<'a> Refresher<'a> {
         aabb.union(&p2.0);
         aabb = aabb.intersect(&self.screenbox); // clip
 
-        for x in aabb.min.x..aabb.max.x
-        {
+        for x in aabb.min.x..aabb.max.x {
             for y in aabb.min.y..aabb.max.y {
                 let p = vec2i(x, y);
                 let res = barycentric(&[p0.0, p1.0, p2.0], &p); // Check the current pixel is in the triangle by the barycentric
@@ -403,13 +419,14 @@ impl<'a> Refresher<'a> {
                 let not_discard = fs(&fs_in, &mut fs_out);
                 let index = (x as usize + y as usize * self.resolution.0 as usize) as usize;
 
-                unsafe {
-                    let db =
-                        (*((&self.depthbuffer) as *const Vec<f32> as *mut Vec<f32>)).as_mut_slice();
-                    if *db.get_unchecked_mut(index) > d && not_discard {
-                        *db.get_unchecked_mut(index) = d;
-                        self.set_pixel_unsafe(index, &fs_out.color);
-                    }
+                //let db = (*((&self.def_db) as *const Vec<f32> as *mut Vec<f32>)).as_mut_slice();
+                // if *db.get_unchecked_mut(index) > d && not_discard {
+                // *db.get_unchecked_mut(index) = d;
+                // self.set_pixel_unsafe(index, &fs_out.color);
+                // }
+                if self.get_depth_value(index) > d && not_discard {
+                    self.set_depth_value(index, d);
+                    self.set_pixel_unsafe(index, &fs_out.color);
                 }
             }
         }
@@ -424,53 +441,97 @@ impl<'a> Refresher<'a> {
     }
 
     pub fn raw_buffer(&self) -> &Vec<u8> {
-        &self.framebuffer
+        &self.def_fb
     }
 
     pub fn raw_buffer_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.framebuffer
+        &mut self.def_fb
     }
 
     pub fn raw_depth_buffer(&self) -> &Vec<f32> {
-        &self.depthbuffer
+        &self.def_db
     }
 
     pub fn clear_color_buffer(&mut self) {
         let pixels = self.buffer_bytes / self.color_component as usize;
-        let comp = self.color_component as usize;
-        (0..pixels).into_par_iter().for_each(|pixel_index| unsafe {
+        //let comp = self.color_component as usize;
+        (0..pixels).into_par_iter().for_each(|pixel_index|{
             self.set_pixel_unsafe_2(pixel_index, &self.clearcolor);
         });
+        // unsafe{
+            // std::ptr::copy(self.cleared_fb.as_ptr(),self.framebuffer,self.cleared_fb.len());
+        // }
     }
 
-    unsafe fn set_pixel_unsafe_2(&self, pixel_index: usize, color: &Color) {
-        let fb = (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
-        let comp = self.color_component as usize;
-        *fb.get_unchecked_mut(comp * pixel_index) = self.clearcolor.r;
-        *fb.get_unchecked_mut(comp * pixel_index + 1) = self.clearcolor.g;
-        *fb.get_unchecked_mut(comp * pixel_index + 2) = self.clearcolor.b;
-        *fb.get_unchecked_mut(comp * pixel_index + 3) = self.clearcolor.a;
+     fn set_pixel_unsafe_2(&self, pixel_index: usize, color: &Color) {
+        unsafe {
+            let comp = self.color_component as isize;
+            let idx = pixel_index as isize;
+            *self.framebuffer.offset(comp * idx) = color.r;
+            *self.framebuffer.offset(comp * idx + 1) = color.g;
+            *self.framebuffer.offset(comp * idx + 2) = color.b;
+            *self.framebuffer.offset(comp * idx + 3) = color.a;
+        }
+        //let fb = (*self.fb_ptr).as_mut_slice();
     }
 
-    unsafe fn set_pixel_unsafe(&self, pixel_index: usize, color: &Vec4) {
-        let fb = (*((&self.framebuffer) as *const Vec<u8> as *mut Vec<u8>)).as_mut_slice();
-        let comp = self.color_component as usize;
-        *fb.get_unchecked_mut(comp * pixel_index) = (255.0 * color.x) as u8;
-        *fb.get_unchecked_mut(comp * pixel_index + 1) = (255.0 * color.y) as u8;
-        *fb.get_unchecked_mut(comp * pixel_index + 2) = (255.0 * color.z) as u8;
-        *fb.get_unchecked_mut(comp * pixel_index + 3) = (255.0 * color.w) as u8;
+    fn set_pixel_unsafe(&self, pixel_index: usize, color: &Vec4) {
+        unsafe {
+            let fb = self.framebuffer;
+            //let fb = (*self.fb_ptr).as_mut_slice();
+            let comp = self.color_component as isize;
+            let idx = pixel_index as isize;
+
+            *self.framebuffer.offset(comp * idx) = (255.0 * color.x) as u8;
+            *self.framebuffer.offset(comp * idx + 1) = (255.0 * color.y) as u8;
+            *self.framebuffer.offset(comp * idx + 2) = (255.0 * color.z) as u8;
+            *self.framebuffer.offset(comp * idx + 3) = (255.0 * color.w) as u8;
+        }
+    }
+    fn set_depth_value(&self, pixel_index: usize, depth: f32) {
+        unsafe {
+            let db = self.depthbuffer;
+            *db.offset(pixel_index as isize) = depth;
+        }
+    }
+    fn get_depth_value(&self, pixel_index: usize) -> f32 {
+        unsafe {
+            let db = self.depthbuffer;
+            let ret = *db.offset(pixel_index as isize);
+            ret
+        }
+    }
+
+    pub fn set_color_buffer(&mut self, fb: Option<&'a mut Vec<u8>>) {
+        if let Some(buf) = fb {
+            self.framebuffer = buf.as_mut_ptr();
+        } else {
+            self.framebuffer = self.def_fb.as_mut_ptr();
+        }
+    }
+
+    pub fn set_depth_buffer(&mut self, db: Option<&'a mut Vec<f32>>) {
+        if let Some(buf) = db {
+            self.depthbuffer = buf.as_mut_ptr();
+        } else {
+            self.depthbuffer = self.def_db.as_mut_ptr();
+        }
     }
 
     pub fn clear_depth_buffer(&mut self) {
-        self.depthbuffer = vec![1.0f32; self.pixel_count];
+        let pixels = self.buffer_bytes / self.color_component as usize;
+        (0..pixels).into_par_iter().for_each(|pixel_index|{
+            self.set_depth_value(pixel_index,1.0f32);
+        });
     }
-
     pub fn set_pixel(&mut self, x: u32, y: u32, color: &Color) {
-        let idx = (x + y * self.resolution.0) as usize;
-        let comp = self.color_component as usize;
-        self.framebuffer[comp * idx] = color.r;
-        self.framebuffer[comp * idx + 1] = color.g;
-        self.framebuffer[comp * idx + 2] = color.b;
-        self.framebuffer[comp * idx + 3] = color.a;
+        let idx = (x + y * self.resolution.0) as isize;
+        let comp = self.color_component as isize;
+        unsafe {
+            *self.framebuffer.offset(comp * idx) = color.r;
+            *self.framebuffer.offset(comp * idx + 1) = color.g;
+            *self.framebuffer.offset(comp * idx + 2) = color.b;
+            *self.framebuffer.offset(comp * idx + 3) = color.a;
+        }
     }
 }

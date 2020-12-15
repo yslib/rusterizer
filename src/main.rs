@@ -95,29 +95,53 @@ fn main() {
     let ident = glm::mat4(
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     );
-    let s = 15.0;
+    let s = 15.0f32;
     let camera_pos = vec3(15.0,15.0,15.0);
     let mut model = glm::ext::scale(&ident, vec3(s, s, s));
+    let cam_center = vec3(0.0,0.0,0.0);
+    let world_up = vec3(0.0,1.0,0.0);
     let view = glm::ext::look_at(
         camera_pos,
-        vec3(0.0f32, 0.0f32, 0.0f32),
-        vec3(0.0f32, 1.0f32, 0.0f32),
+        cam_center,
+        world_up
     );
+
+
+    // create a light
+    let light_pos = camera_pos;
+    let light_target = cam_center;
+
+    let light_view = glm::ext::look_at(light_pos,light_target,world_up);
     let proj = glm::ext::perspective(45.0f32, res.0 as f32 / res.0 as f32, 0.001f32, 1000.0f32);
     //let mvp = Arc::new(RwLock::new(proj * view * model));
     let mvp = proj * view * model;
+    let light_mvp = proj * light_view * model;
 
-    // create a light
-    let light = camera_pos;
 
     // create renderer
     let mut refresher = Refresher::new(res);
 
     // set vertex and index buffer
     //refresher.set_vertex(&vertex);
+    
     refresher.set_per_vertex_attribute(attrib);
     refresher.set_index(&index);
     refresher.enable_face_culling(true);
+
+
+    let depth_vs = |vs_in:&VS_IN,vs_out: &mut VS_OUT_FS_IN|->Vec4{
+        let v = &vs_in.vertex;
+        vs_out.vertex = *vs_in.vertex;
+        vs_out.texCoord = *vs_in.texCoord;
+        vs_out.norm = *vs_in.norm;
+        light_mvp * vec4(v.x, v.y, v.z, 1.0)
+    };
+
+    let depth_fs = |fs_in: &VS_OUT_FS_IN, fs_out: &mut FS_OUT| -> bool {
+
+
+        true
+    };
 
     // create shaders
     let vs = |vs_in: &VS_IN, vs_out: &mut VS_OUT_FS_IN| -> Vec4 {
@@ -134,7 +158,7 @@ fn main() {
         let frag_normal = normalize(fs_in.norm);
         let frag_pos = &fs_in.vertex;
         let eye_dir = normalize(camera_pos - *frag_pos);
-        let light_dir = normalize(light - *frag_pos);
+        let light_dir = normalize(light_pos - *frag_pos);
 
         let H = (eye_dir + light_dir) / 2.0;
 
@@ -266,7 +290,7 @@ mod tests {
                 if let Some(iter) = reader.read_normals() {
                     norms = iter.map(|v| vec3(v[0], v[1], v[2])).collect();
                 }
-                if let Some(iter) = reader.read_tex_coords() {
+                if let Some(iter) = reader.read_tex_coords(0) {
                     tex_coord = iter.map(|v| vec2(v[0], v[1])).collect();
                 }
             }
